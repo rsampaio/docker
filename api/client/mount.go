@@ -1,10 +1,12 @@
 package client
 
 import (
-	"fmt"
+	"encoding/json"
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
 	Cli "github.com/docker/docker/cli"
 	"io/ioutil"
+	"net/url"
 	"strings"
 )
 
@@ -35,7 +37,21 @@ func (cli *DockerCli) CmdMount(args ...string) error {
 
 	if empty {
 		// List mounted containers
-		fmt.Printf("deadbeef\t/var/lib/docker/storagedriver/deadbeef\tro,nosuid\n")
+		params := url.Values{}
+		params.Add("filter", "{'status':'mounted'}")
+		servResp, err := cli.call("GET", "/containers/json?"+params.Encode(), nil, nil)
+		if err != nil {
+			return err
+		}
+
+		defer servResp.body.Close()
+		containers := []types.Container{}
+
+		if err := json.NewDecoder(servResp.body).Decode(&containers); err != nil {
+			return err
+		}
+
+		logrus.Infof("%+v\n", containers)
 	} else {
 		container := cmd.Arg(0)
 		servResp, err := cli.call("POST", "/containers/"+container+"/mount", nil, nil)
@@ -44,6 +60,7 @@ func (cli *DockerCli) CmdMount(args ...string) error {
 		}
 
 		body, err := ioutil.ReadAll(servResp.body)
+		defer servResp.body.Close()
 		if err != nil {
 			logrus.Fatal(err.Error())
 		}

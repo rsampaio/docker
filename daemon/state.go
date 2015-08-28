@@ -53,12 +53,12 @@ func (s *State) String() string {
 		return "Dead"
 	}
 
-	if s.StartedAt.IsZero() {
-		return "Created"
+	if s.Mounted {
+		return "Mounted"
 	}
 
-	if s.IsMounted() {
-		return "Mounted"
+	if s.StartedAt.IsZero() {
+		return "Created"
 	}
 
 	if s.FinishedAt.IsZero() {
@@ -84,12 +84,12 @@ func (s *State) StateString() string {
 		return "dead"
 	}
 
-	if s.StartedAt.IsZero() {
-		return "created"
+	if s.Mounted {
+		return "mounted"
 	}
 
-	if s.IsMounted() {
-		return "mounted"
+	if s.StartedAt.IsZero() {
+		return "created"
 	}
 
 	return "exited"
@@ -101,6 +101,7 @@ func isValidStateString(s string) bool {
 		s != "running" &&
 		s != "dead" &&
 		s != "created" &&
+		s != "mounted" &&
 		s != "exited" {
 		return false
 	}
@@ -298,11 +299,4 @@ func (s *State) UnsetMounted() {
 	s.Lock()
 	s.Mounted = false
 	s.Unlock()
-}
-
-func (s *State) IsMounted() bool {
-	s.Lock()
-	res := s.Mounted
-	s.Unlock()
-	return res
 }

@@ -51,6 +51,7 @@ func (daemon *Daemon) getInspectData(container *Container) (*types.ContainerJSON
 		Restarting: container.State.Restarting,
 		OOMKilled:  container.State.OOMKilled,
 		Dead:       container.State.Dead,
+		Mounted:    container.State.Mounted,
 		Pid:        container.State.Pid,
 		ExitCode:   container.State.ExitCode,
 		Error:      container.State.Error,

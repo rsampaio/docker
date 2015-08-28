@@ -232,6 +232,7 @@ type ContainerState struct {
 	Restarting bool
 	OOMKilled  bool
 	Dead       bool
+	Mounted    bool
 	Pid        int
 	ExitCode   int
 	Error      string

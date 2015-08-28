@@ -845,11 +845,13 @@ func (daemon *Daemon) Mount(container *Container) error {
 		}
 	}
 	container.basefs = dir
+	container.SetMounted()
 	return nil
 }
 
 func (daemon *Daemon) Unmount(container *Container) error {
 	daemon.driver.Put(container.ID)
+	container.UnsetMounted()
 	return nil
 }
 
