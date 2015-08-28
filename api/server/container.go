@@ -500,6 +500,36 @@ func (s *Server) postContainersAttach(version version.Version, w http.ResponseWr
 	return nil
 }
 
+//
+func (s *Server) getContainersMount(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return err
+	}
+
+	if vars == nil {
+		return fmt.Errorf("Missing Parameter")
+	}
+
+	return nil
+}
+
+func (s *Server) postContainersMount(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	if err := parseForm(r); err != nil {
+		return err
+	}
+
+	if vars == nil {
+		return fmt.Errorf("Missing parameter")
+	}
+
+	cont, err := s.daemon.Get(vars["name"])
+	if err != nil {
+		return err
+	}
+
+	return s.daemon.Mount(cont)
+}
+
 func (s *Server) wsContainersAttach(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err

@@ -555,6 +555,7 @@ func (container *Container) Export() (archive.Archive, error) {
 }
 
 func (container *Container) Mount() error {
+	container.SetMounted()
 	return container.daemon.Mount(container)
 }
 
@@ -576,6 +577,7 @@ func (container *Container) GetImage() (*image.Image, error) {
 }
 
 func (container *Container) Unmount() error {
+	container.UnsetMounted()
 	return container.daemon.Unmount(container)
 }
 

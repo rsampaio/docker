@@ -17,6 +17,7 @@ type State struct {
 	OOMKilled         bool
 	removalInProgress bool // Not need for this to be persistent on disk.
 	Dead              bool
+	Mounted           bool
 	Pid               int
 	ExitCode          int
 	Error             string // contains last known error when starting the container
@@ -56,6 +57,10 @@ func (s *State) String() string {
 		return "Created"
 	}
 
+	if s.IsMounted() {
+		return "Mounted"
+	}
+
 	if s.FinishedAt.IsZero() {
 		return ""
 	}
@@ -81,6 +86,10 @@ func (s *State) StateString() string {
 
 	if s.StartedAt.IsZero() {
 		return "created"
+	}
+
+	if s.IsMounted() {
+		return "mounted"
 	}
 
 	return "exited"
@@ -273,4 +282,23 @@ func (s *State) SetDead() {
 	s.Lock()
 	s.Dead = true
 	s.Unlock()
+}
+
+func (s *State) SetMounted() {
+	s.Lock()
+	s.Mounted = true
+	s.Unlock()
+}
+
+func (s *State) UnsetMounted() {
+	s.Lock()
+	s.Mounted = false
+	s.Unlock()
+}
+
+func (s *State) IsMounted() bool {
+	s.Lock()
+	res := s.Mounted
+	s.Unlock()
+	return res
 }

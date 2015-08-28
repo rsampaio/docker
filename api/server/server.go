@@ -348,6 +348,7 @@ func createRouter(s *Server) *mux.Router {
 			"/containers/{name:.*}/resize":  s.postContainersResize,
 			"/containers/{name:.*}/attach":  s.postContainersAttach,
 			"/containers/{name:.*}/copy":    s.postContainersCopy,
+			"/containers/{name:.*}/mount":   s.postContainersMount,
 			"/containers/{name:.*}/exec":    s.postContainerExecCreate,
 			"/exec/{name:.*}/start":         s.postContainerExecStart,
 			"/exec/{name:.*}/resize":        s.postContainerExecResize,
