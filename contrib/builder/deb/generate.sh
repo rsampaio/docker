@@ -22,6 +22,13 @@ for version in "${versions[@]}"; do
 	suite="${version##*-}"
 	from="${distro}:${suite}"
 
+	case "$from" in
+		debian:wheezy)
+			# add -backports, like our users have to
+			from+='-backports'
+			;;
+	esac
+
 	mkdir -p "$version"
 	echo "$version -> FROM $from"
 	cat > "$version/Dockerfile" <<-EOF
@@ -31,13 +38,6 @@ for version in "${versions[@]}"; do
 
 		FROM $from
 	EOF
-
-	case "$from" in
-		debian:wheezy)
-			# add -backports, like our users have to
-			echo "RUN echo deb http://http.debian.net/debian $suite-backports main > /etc/apt/sources.list.d/$suite-backports.list" >> "$version/Dockerfile"
-			;;
-	esac
 
 	echo >> "$version/Dockerfile"
 
@@ -71,6 +71,12 @@ for version in "${versions[@]}"; do
 		#   (since kernels on precise are old too, just skip btrfs entirely)
 		packages=( "${packages[@]/btrfs-tools}" )
 		extraBuildTags+=' exclude_graphdriver_btrfs'
+	fi
+
+	if [ "$suite" = 'wheezy' ]; then
+		# pull btrfs-toold from backports
+		backports="/$suite-backports"
+		packages=( "${packages[@]/btrfs-tools/btrfs-tools$backports}" )
 	fi
 
 	echo "RUN apt-get update && apt-get install -y ${packages[*]} --no-install-recommends && rm -rf /var/lib/apt/lists/*" >> "$version/Dockerfile"

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"runtime"
 
 	"github.com/Sirupsen/logrus"
 )
@@ -51,9 +50,7 @@ func (daemon *Daemon) ContainerRm(name string, config *ContainerRmConfig) error 
 		return fmt.Errorf("Cannot destroy container %s: %v", name, err)
 	}
 
-	if config.RemoveVolume {
-		container.removeMountPoints()
-	}
+	container.removeMountPoints(config.RemoveVolume)
 	return nil
 }
 
@@ -117,12 +114,9 @@ func (daemon *Daemon) rm(container *Container, forceRemove bool) (err error) {
 		return fmt.Errorf("Driver %s failed to remove root filesystem %s: %s", daemon.driver, container.ID, err)
 	}
 
-	// There will not be an -init on Windows, so don't fail by not attempting to delete it
-	if runtime.GOOS != "windows" {
-		initID := fmt.Sprintf("%s-init", container.ID)
-		if err := daemon.driver.Remove(initID); err != nil {
-			return fmt.Errorf("Driver %s failed to remove init filesystem %s: %s", daemon.driver, initID, err)
-		}
+	initID := fmt.Sprintf("%s-init", container.ID)
+	if err := daemon.driver.Remove(initID); err != nil {
+		return fmt.Errorf("Driver %s failed to remove init filesystem %s: %s", daemon.driver, initID, err)
 	}
 
 	if err = os.RemoveAll(container.root); err != nil {
@@ -141,6 +135,19 @@ func (daemon *Daemon) rm(container *Container, forceRemove bool) (err error) {
 	return nil
 }
 
-func (daemon *Daemon) DeleteVolumes(c *Container) error {
-	return c.removeMountPoints()
+// VolumeRm removes the volume with the given name.
+// If the volume is referenced by a container it is not removed
+// This is called directly from the remote API
+func (daemon *Daemon) VolumeRm(name string) error {
+	v, err := daemon.volumes.Get(name)
+	if err != nil {
+		return err
+	}
+	if err := daemon.volumes.Remove(v); err != nil {
+		if err == ErrVolumeInUse {
+			return fmt.Errorf("Conflict: %v", err)
+		}
+		return err
+	}
+	return nil
 }

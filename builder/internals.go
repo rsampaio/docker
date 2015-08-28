@@ -230,7 +230,7 @@ func (b *builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 		return nil
 	}
 
-	container, _, err := b.Daemon.Create(b.Config, nil, "")
+	container, _, err := b.Daemon.ContainerCreate("", b.Config, nil, true)
 	if err != nil {
 		return err
 	}
@@ -241,18 +241,10 @@ func (b *builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 	}
 	defer container.Unmount()
 
-	if err := container.PrepareStorage(); err != nil {
-		return err
-	}
-
 	for _, ci := range copyInfos {
 		if err := b.addContext(container, ci.origPath, ci.destPath, ci.decompress); err != nil {
 			return err
 		}
-	}
-
-	if err := container.CleanupStorage(); err != nil {
-		return err
 	}
 
 	if err := b.commit(container.ID, cmd, fmt.Sprintf("%s %s in %s", cmdName, origPaths, dest)); err != nil {
@@ -621,7 +613,7 @@ func (b *builder) create() (*daemon.Container, error) {
 	config := *b.Config
 
 	// Create the container
-	c, warnings, err := b.Daemon.Create(b.Config, hostConfig, "")
+	c, warnings, err := b.Daemon.ContainerCreate("", b.Config, hostConfig, true)
 	if err != nil {
 		return nil, err
 	}

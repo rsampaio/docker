@@ -25,6 +25,7 @@ packages=(
 	daemon/execdriver/native
 	daemon/execdriver/native/template
 	daemon/execdriver/windows
+	daemon/graphdriver
 	daemon/graphdriver/aufs
 	daemon/graphdriver/devmapper
 	daemon/graphdriver/overlay
@@ -43,6 +44,7 @@ packages=(
 	graph/tags
 	image
 	integration-cli
+	opts
 	pkg/archive
 	pkg/broadcastwriter
 	pkg/chrootarchive
@@ -75,11 +77,13 @@ packages=(
 	pkg/reexec
 	pkg/signal
 	pkg/sockets
+	pkg/stdcopy
 	pkg/streamformatter
 	pkg/stringid
 	pkg/stringutils
-	pkg/sysinfo
 	pkg/symlink
+	pkg/sysinfo
+	pkg/system
 	pkg/tailfile
 	pkg/tarsum
 	pkg/term
@@ -94,6 +98,7 @@ packages=(
 	pkg/version
 	registry
 	runconfig
+	trust
 	utils
 	volume
 	volume/local

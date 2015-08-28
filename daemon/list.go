@@ -136,7 +136,18 @@ func (daemon *Daemon) Containers(config *ContainersConfig) ([]*types.Container, 
 			ID:    container.ID,
 			Names: names[container.ID],
 		}
-		newC.Image = container.Config.Image
+
+		img, err := daemon.Repositories().LookupImage(container.Config.Image)
+		if err != nil {
+			// If the image can no longer be found by its original reference,
+			// it makes sense to show the ID instead of a stale reference.
+			newC.Image = container.ImageID
+		} else if container.ImageID == img.ID {
+			newC.Image = container.Config.Image
+		} else {
+			newC.Image = container.ImageID
+		}
+
 		if len(container.Args) > 0 {
 			args := []string{}
 			for _, arg := range container.Args {
@@ -202,4 +213,33 @@ func (daemon *Daemon) Containers(config *ContainersConfig) ([]*types.Container, 
 		}
 	}
 	return containers, nil
+}
+
+func (daemon *Daemon) Volumes(filter string) ([]*types.Volume, error) {
+	var volumesOut []*types.Volume
+	volFilters, err := filters.FromParam(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	filterUsed := false
+	if i, ok := volFilters["dangling"]; ok {
+		if len(i) > 1 {
+			return nil, fmt.Errorf("Conflict: cannot use more than 1 value for `dangling` filter")
+		}
+
+		filterValue := i[0]
+		if strings.ToLower(filterValue) == "true" || filterValue == "1" {
+			filterUsed = true
+		}
+	}
+
+	volumes := daemon.volumes.List()
+	for _, v := range volumes {
+		if filterUsed && daemon.volumes.Count(v) == 0 {
+			continue
+		}
+		volumesOut = append(volumesOut, volumeToAPIType(v))
+	}
+	return volumesOut, nil
 }

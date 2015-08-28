@@ -31,20 +31,6 @@ var (
 	ErrConflictNetworkExposePorts = fmt.Errorf("Conflicting options: --expose and the network mode (--expose)")
 )
 
-// validateNM is the set of fields passed to validateNetMode()
-type validateNM struct {
-	netMode        NetworkMode
-	flHostname     *string
-	flLinks        opts.ListOpts
-	flDNS          opts.ListOpts
-	flExtraHosts   opts.ListOpts
-	flMacAddress   *string
-	flPublish      opts.ListOpts
-	flPublishAll   *bool
-	flExpose       opts.ListOpts
-	flVolumeDriver string
-}
-
 // Parse parses the specified args for the specified command and generates a Config,
 // a HostConfig and returns them with the specified command.
 // If the specified args are not valid, it will return an error.
@@ -88,6 +74,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		flHostname        = cmd.String([]string{"h", "-hostname"}, "", "Container host name")
 		flMemoryString    = cmd.String([]string{"m", "-memory"}, "", "Memory limit")
 		flMemorySwap      = cmd.String([]string{"-memory-swap"}, "", "Total memory (memory + swap), '-1' to disable swap")
+		flKernelMemory    = cmd.String([]string{"-kernel-memory"}, "", "Kernel memory limit")
 		flUser            = cmd.String([]string{"u", "-user"}, "", "Username or UID (format: <name|uid>[:<group|gid>])")
 		flWorkingDir      = cmd.String([]string{"w", "-workdir"}, "", "Working directory inside the container")
 		flCPUShares       = cmd.Int64([]string{"c", "-cpu-shares"}, 0, "CPU shares (relative weight)")
@@ -143,27 +130,6 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		attachStderr = flAttach.Get("stderr")
 	)
 
-	netMode, err := parseNetMode(*flNetMode)
-	if err != nil {
-		return nil, nil, cmd, fmt.Errorf("--net: invalid net mode: %v", err)
-	}
-
-	vals := validateNM{
-		netMode:      netMode,
-		flHostname:   flHostname,
-		flLinks:      flLinks,
-		flDNS:        flDNS,
-		flExtraHosts: flExtraHosts,
-		flMacAddress: flMacAddress,
-		flPublish:    flPublish,
-		flPublishAll: flPublishAll,
-		flExpose:     flExpose,
-	}
-
-	if err := validateNetMode(&vals); err != nil {
-		return nil, nil, cmd, err
-	}
-
 	// Validate the input mac address
 	if *flMacAddress != "" {
 		if _, err := opts.ValidateMACAddress(*flMacAddress); err != nil {
@@ -199,6 +165,15 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 			}
 			memorySwap = parsedMemorySwap
 		}
+	}
+
+	var KernelMemory int64
+	if *flKernelMemory != "" {
+		parsedKernelMemory, err := units.RAMInBytes(*flKernelMemory)
+		if err != nil {
+			return nil, nil, cmd, err
+		}
+		KernelMemory = parsedKernelMemory
 	}
 
 	swappiness := *flSwappiness
@@ -355,6 +330,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		LxcConf:          lxcConf,
 		Memory:           flMemory,
 		MemorySwap:       memorySwap,
+		KernelMemory:     KernelMemory,
 		CPUShares:        *flCPUShares,
 		CPUPeriod:        *flCPUPeriod,
 		CpusetCpus:       *flCpusetCpus,
@@ -371,7 +347,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		DNSSearch:        flDNSSearch.GetAll(),
 		ExtraHosts:       flExtraHosts.GetAll(),
 		VolumesFrom:      flVolumesFrom.GetAll(),
-		NetworkMode:      netMode,
+		NetworkMode:      NetworkMode(*flNetMode),
 		IpcMode:          ipcMode,
 		PidMode:          pidMode,
 		UTSMode:          utsMode,
@@ -450,9 +426,9 @@ func ParseRestartPolicy(policy string) (RestartPolicy, error) {
 
 	p.Name = name
 	switch name {
-	case "always":
+	case "always", "unless-stopped":
 		if len(parts) > 1 {
-			return p, fmt.Errorf("maximum restart count not valid with restart policy of \"always\"")
+			return p, fmt.Errorf("maximum restart count not valid with restart policy of \"%s\"", name)
 		}
 	case "no":
 		// do nothing
@@ -498,7 +474,11 @@ func ParseDevice(device string) (DeviceMapping, error) {
 		permissions = arr[2]
 		fallthrough
 	case 2:
-		dst = arr[1]
+		if opts.ValidDeviceMode(arr[1]) {
+			permissions = arr[1]
+		} else {
+			dst = arr[1]
+		}
 		fallthrough
 	case 1:
 		src = arr[0]

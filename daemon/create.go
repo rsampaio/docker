@@ -4,22 +4,24 @@ import (
 	"fmt"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/graph/tags"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/parsers"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/runconfig"
 	"github.com/opencontainers/runc/libcontainer/label"
 )
 
-func (daemon *Daemon) ContainerCreate(name string, config *runconfig.Config, hostConfig *runconfig.HostConfig, adjustCPUShares bool) (string, []string, error) {
+func (daemon *Daemon) ContainerCreate(name string, config *runconfig.Config, hostConfig *runconfig.HostConfig, adjustCPUShares bool) (*Container, []string, error) {
 	if config == nil {
-		return "", nil, fmt.Errorf("Config cannot be empty in order to create a container")
+		return nil, nil, fmt.Errorf("Config cannot be empty in order to create a container")
 	}
 
 	warnings, err := daemon.verifyContainerSettings(hostConfig, config)
 	daemon.adaptContainerSettings(hostConfig, adjustCPUShares)
 	if err != nil {
-		return "", warnings, err
+		return nil, warnings, err
 	}
 
 	container, buildWarnings, err := daemon.Create(config, hostConfig, name)
@@ -29,18 +31,18 @@ func (daemon *Daemon) ContainerCreate(name string, config *runconfig.Config, hos
 			if tag == "" {
 				tag = tags.DefaultTag
 			}
-			return "", warnings, fmt.Errorf("No such image: %s (tag: %s)", config.Image, tag)
+			return nil, warnings, fmt.Errorf("No such image: %s (tag: %s)", config.Image, tag)
 		}
-		return "", warnings, err
+		return nil, warnings, err
 	}
 
 	warnings = append(warnings, buildWarnings...)
 
-	return container.ID, warnings, nil
+	return container, warnings, nil
 }
 
 // Create creates a new container from the given configuration with a given name.
-func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.HostConfig, name string) (*Container, []string, error) {
+func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.HostConfig, name string) (retC *Container, retS []string, retErr error) {
 	var (
 		container *Container
 		warnings  []string
@@ -63,6 +65,7 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 	if err := daemon.mergeAndVerifyConfig(config, img); err != nil {
 		return nil, nil, err
 	}
+
 	if hostConfig == nil {
 		hostConfig = &runconfig.HostConfig{}
 	}
@@ -75,6 +78,14 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 	if container, err = daemon.newContainer(name, config, imgID); err != nil {
 		return nil, nil, err
 	}
+	defer func() {
+		if retErr != nil {
+			if err := daemon.rm(container, false); err != nil {
+				logrus.Errorf("Clean up Error! Cannot destroy container %s: %v", container.ID, err)
+			}
+		}
+	}()
+
 	if err := daemon.Register(container); err != nil {
 		return nil, nil, err
 	}
@@ -89,7 +100,7 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 	}
 	defer container.Unmount()
 
-	if err := createContainerPlatformSpecificSettings(container, config); err != nil {
+	if err := createContainerPlatformSpecificSettings(container, config, img); err != nil {
 		return nil, nil, err
 	}
 
@@ -114,4 +125,18 @@ func (daemon *Daemon) GenerateSecurityOpt(ipcMode runconfig.IpcMode, pidMode run
 		return label.DupSecOpt(c.ProcessLabel), nil
 	}
 	return nil, nil
+}
+
+// VolumeCreate creates a volume with the specified name, driver, and opts
+// This is called directly from the remote API
+func (daemon *Daemon) VolumeCreate(name, driverName string, opts map[string]string) (*types.Volume, error) {
+	if name == "" {
+		name = stringid.GenerateNonCryptoID()
+	}
+
+	v, err := daemon.volumes.Create(name, driverName, opts)
+	if err != nil {
+		return nil, err
+	}
+	return volumeToAPIType(v), nil
 }

@@ -140,6 +140,13 @@ func (rp *RestartPolicy) IsOnFailure() bool {
 	return rp.Name == "on-failure"
 }
 
+// IsUnlessStopped indicates whether the container has the
+// "unless-stopped" restart policy. This means the container will
+// automatically restart unless user has put it to stopped state.
+func (rp *RestartPolicy) IsUnlessStopped() bool {
+	return rp.Name == "unless-stopped"
+}
+
 // LogConfig represents the logging configuration of the container.
 type LogConfig struct {
 	Type   string
@@ -265,6 +272,7 @@ type HostConfig struct {
 	LxcConf          *LxcConfig       // Additional lxc configuration
 	Memory           int64            // Memory limit (in bytes)
 	MemorySwap       int64            // Total memory usage (memory + swap); set `-1` to disable swap
+	KernelMemory     int64            // Kernel memory limit (in bytes)
 	CPUShares        int64            `json:"CpuShares"` // CPU shares (relative weight vs. other containers)
 	CPUPeriod        int64            `json:"CpuPeriod"` // CPU CFS (Completely Fair Scheduler) period
 	CpusetCpus       string           // CpusetCpus 0-2, 0,1
@@ -298,16 +306,6 @@ type HostConfig struct {
 	ConsoleSize      [2]int           // Initial console size on Windows
 }
 
-// MergeConfigs merges the specified container Config and HostConfig.
-// It creates a ContainerConfigWrapper.
-func MergeConfigs(config *Config, hostConfig *HostConfig) *ContainerConfigWrapper {
-	return &ContainerConfigWrapper{
-		config,
-		hostConfig,
-		"", nil,
-	}
-}
-
 // DecodeHostConfig creates a HostConfig based on the specified Reader.
 // It assumes the content of the reader will be JSON, and decodes it.
 func DecodeHostConfig(src io.Reader) (*HostConfig, error) {
@@ -318,7 +316,19 @@ func DecodeHostConfig(src io.Reader) (*HostConfig, error) {
 		return nil, err
 	}
 
-	hc := w.GetHostConfig()
-
+	hc := w.getHostConfig()
 	return hc, nil
+}
+
+// SetDefaultNetModeIfBlank changes the NetworkMode in a HostConfig structure
+// to default if it is not populated. This ensures backwards compatibility after
+// the validation of the network mode was moved from the docker CLI to the
+// docker daemon.
+func SetDefaultNetModeIfBlank(hc *HostConfig) *HostConfig {
+	if hc != nil {
+		if hc.NetworkMode == NetworkMode("") {
+			hc.NetworkMode = NetworkMode("default")
+		}
+	}
+	return hc
 }

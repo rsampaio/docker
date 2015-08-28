@@ -5,7 +5,7 @@ description = "API Documentation for Docker"
 keywords = ["API, Docker, rcli, REST,  documentation"]
 [menu.main]
 parent="smn_remoteapi"
-weight = 1
+weight = 0
 +++
 <![end-metadata]-->
 
@@ -61,7 +61,7 @@ List containers
          },
          {
                  "Id": "9cd87474be90",
-                 "Names":["/coolName"]
+                 "Names":["/coolName"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 222222",
                  "Created": 1367854155,
@@ -73,7 +73,7 @@ List containers
          },
          {
                  "Id": "3176a2479c92",
-                 "Names":["/sleepy_dog"]
+                 "Names":["/sleepy_dog"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 3333333333333333",
                  "Created": 1367854154,
@@ -85,7 +85,7 @@ List containers
          },
          {
                  "Id": "4cb07b47f9fb",
-                 "Names":["/running_cat"]
+                 "Names":["/running_cat"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 444444444444444444444444444444444",
                  "Created": 1367854152,
@@ -172,6 +172,7 @@ Create a container
              "LxcConf": {"lxc.utsname":"docker"},
              "Memory": 0,
              "MemorySwap": 0,
+             "KernelMemory": 0,
              "CpuShares": 512,
              "CpuPeriod": 100000,
              "CpusetCpus": "0,1",
@@ -205,7 +206,7 @@ Create a container
       Content-Type: application/json
 
       {
-           "Id":"e90e34656806"
+           "Id":"e90e34656806",
            "Warnings":[]
       }
 
@@ -217,8 +218,9 @@ Json Parameters:
       for the container.
 -   **User** - A string value specifying the user inside the container.
 -   **Memory** - Memory limit in bytes.
--   **MemorySwap**- Total memory limit (memory + swap); set `-1` to disable swap
+-   **MemorySwap** - Total memory limit (memory + swap); set `-1` to disable swap
       You must use this with `memory` and make the swap value larger than `memory`.
+-   **KernelMemory** - Kernel memory limit in bytes.
 -   **CpuShares** - An integer value containing the container's CPU Shares
       (ie. the relative weight vs other containers).
 -   **CpuPeriod** - The length of a CPU period in microseconds.
@@ -276,7 +278,8 @@ Json Parameters:
     -   **Capdrop** - A list of kernel capabilities to drop from the container.
     -   **RestartPolicy** – The behavior to apply when the container exits.  The
             value is an object with a `Name` property of either `"always"` to
-            always restart or `"on-failure"` to restart only when the container
+            always restart, `"unless-stopped"` to restart always except when
+            user has manually stopped the container or `"on-failure"` to restart only when the container
             exit code is non-zero.  If `on-failure` is used, `MaximumRetryCount`
             controls the number of times to retry before giving up.
             The default is not to restart. (optional)
@@ -387,6 +390,7 @@ Return low-level information on the container `id`
 			"LxcConf": [],
 			"Memory": 0,
 			"MemorySwap": 0,
+			"KernelMemory": 0,
 			"OomKillDisable": false,
 			"NetworkMode": "bridge",
 			"PortBindings": {},
@@ -698,9 +702,9 @@ Status Codes:
 
 ### Resize a container TTY
 
-`POST /containers/(id)/resize?h=<height>&w=<width>`
+`POST /containers/(id)/resize`
 
-Resize the TTY for container with  `id`. You must restart the container for the resize to take effect.
+Resize the TTY for container with  `id`. The unit is number of characters. You must restart the container for the resize to take effect.
 
 **Example request**:
 
@@ -711,6 +715,11 @@ Resize the TTY for container with  `id`. You must restart the container for the 
       HTTP/1.1 200 OK
       Content-Length: 0
       Content-Type: text/plain; charset=utf-8
+
+Query Parameters:
+
+-   **h** – height of `tty` session
+-   **w** – width
 
 Status Codes:
 
@@ -2050,7 +2059,7 @@ Sets up an exec instance in a running container `id`
     Content-Type: application/json
 
     {
-         "Id": "f90e34656806"
+         "Id": "f90e34656806",
          "Warnings":[]
     }
 
@@ -2110,12 +2119,12 @@ Status Codes:
 
 `POST /exec/(id)/resize`
 
-Resizes the `tty` session used by the `exec` command `id`.
+Resizes the `tty` session used by the `exec` command `id`.  The unit is number of characters.
 This API is valid only if `tty` was specified as part of creating and starting the `exec` command.
 
 **Example request**:
 
-    POST /exec/e90e34656806/resize HTTP/1.1
+    POST /exec/e90e34656806/resize?h=40&w=80 HTTP/1.1
     Content-Type: text/plain
 
 **Example response**:
@@ -2234,6 +2243,126 @@ Status Codes:
 
 -   **200** – no error
 -   **404** – no such exec instance
+-   **500** - server error
+
+## 2.4 Volumes
+
+### List volumes
+
+`GET /volumes`
+
+**Example request**:
+
+  GET /volumes HTTP/1.1
+
+**Example response**:
+
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+
+  {
+    "Volumes": [
+      {
+        "Name": "tardis",
+        "Driver": "local",
+        "Mountpoint": "/var/lib/docker/volumes/tardis"
+      }
+    ]
+  }
+
+Query Parameters:
+
+- **filter** - JSON encoded value of the filters (a `map[string][]string`) to process on the volumes list. There is one available filter: `dangling=true`
+
+Status Codes:
+
+-   **200** - no error
+-   **500** - server error
+
+### Create a volume
+
+`POST /volumes`
+
+Create a volume
+
+**Example request**:
+
+  POST /volumes HTTP/1.1
+  Content-Type: application/json
+
+  {
+    "Name": "tardis"
+  }
+
+**Example response**:
+
+  HTTP/1.1 201 Created
+  Content-Type: application/json
+
+  {
+    "Name": "tardis"
+    "Driver": "local",
+    "Mountpoint": "/var/lib/docker/volumes/tardis"
+  }
+
+Status Codes:
+
+- **201** - no error
+- **500**  - server error
+
+JSON Parameters:
+
+- **Name** - The new volume's name. If not specified, Docker generates a name.
+- **Driver** - Name of the volume driver to use. Defaults to `local` for the name.
+- **DriverOpts** - A mapping of driver options and values. These options are
+    passed directly to the driver and are driver specific.
+
+### Inspect a volume
+
+`GET /volumes/(name)`
+
+Return low-level information on the volume `name`
+
+**Example request**:
+
+    GET /volumes/tardis
+
+**Example response**:
+
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+
+  {
+    "Name": "tardis",
+    "Driver": "local",
+    "Mountpoint": "/var/lib/docker/volumes/tardis"
+  }
+
+Status Codes:
+
+-   **200** - no error
+-   **404** - no such volume
+-   **500** - server error
+
+### Remove a volume
+
+`DELETE /volumes/(name)`
+
+Instruct the driver to remove the volume (`name`).
+
+**Example request**:
+
+  DELETE /volumes/local/tardis HTTP/1.1
+
+**Example response**:
+
+  HTTP/1.1 204 No Content
+
+Status Codes
+
+-   **204** - no error
+-   **404** - no such volume or volume driver
+-   **409** - volume is in use and cannot be removed
 -   **500** - server error
 
 # 3. Going further

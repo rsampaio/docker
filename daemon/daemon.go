@@ -24,12 +24,14 @@ import (
 	"github.com/docker/docker/daemon/network"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/namesgenerator"
 	"github.com/docker/docker/pkg/nat"
+	"github.com/docker/docker/pkg/signal"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/pkg/system"
@@ -101,7 +103,9 @@ type Daemon struct {
 	RegistryService  *registry.Service
 	EventsService    *events.Events
 	netController    libnetwork.NetworkController
+	volumes          *volumeStore
 	root             string
+	shutdown         bool
 }
 
 // Get looks for a container using the provided information, which could be
@@ -193,14 +197,6 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 	// we'll waste time if we update it for every container
 	daemon.idIndex.Add(container.ID)
 
-	if err := daemon.verifyVolumesInfo(container); err != nil {
-		return err
-	}
-
-	if err := container.prepareMountPoints(); err != nil {
-		return err
-	}
-
 	if container.IsRunning() {
 		logrus.Debugf("killing old running container %s", container.ID)
 		// Set exit code to 128 + SIGKILL (9) to properly represent unsuccessful exit
@@ -218,6 +214,14 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 		if err := container.ToDisk(); err != nil {
 			logrus.Errorf("Error saving stopped state to disk: %v", err)
 		}
+	}
+
+	if err := daemon.verifyVolumesInfo(container); err != nil {
+		return err
+	}
+
+	if err := container.prepareMountPoints(); err != nil {
+		return err
 	}
 
 	return nil
@@ -650,7 +654,8 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	}
 
 	// Configure the volumes driver
-	if err := configureVolumes(config); err != nil {
+	volStore, err := configureVolumes(config)
+	if err != nil {
 		return nil, err
 	}
 
@@ -664,7 +669,7 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	if err := system.MkdirAll(trustDir, 0700); err != nil {
 		return nil, err
 	}
-	trustService, err := trust.NewTrustStore(trustDir)
+	trustService, err := trust.NewStore(trustDir)
 	if err != nil {
 		return nil, fmt.Errorf("could not create trust store: %s", err)
 	}
@@ -681,6 +686,12 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	repositories, err := graph.NewTagStore(filepath.Join(config.Root, "repositories-"+d.driver.String()), tagCfg)
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't create Tag store repositories-%s: %s", d.driver.String(), err)
+	}
+
+	if restorer, ok := d.driver.(graphdriver.ImageRestorer); ok {
+		if _, err := restorer.RestoreCustomImages(repositories, g); err != nil {
+			return nil, fmt.Errorf("Couldn't restore custom images: %s", err)
+		}
 	}
 
 	d.netController, err = initNetworkController(config)
@@ -731,6 +742,7 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	d.defaultLogConfig = config.LogConfig
 	d.RegistryService = registryService
 	d.EventsService = eventsService
+	d.volumes = volStore
 	d.root = config.Root
 	go d.execCommandGC()
 
@@ -742,6 +754,7 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 }
 
 func (daemon *Daemon) Shutdown() error {
+	daemon.shutdown = true
 	if daemon.containers != nil {
 		group := sync.WaitGroup{}
 		logrus.Debug("starting clean shutdown of all containers...")
@@ -753,9 +766,39 @@ func (daemon *Daemon) Shutdown() error {
 
 				go func() {
 					defer group.Done()
-					// If container failed to exit in 10 seconds of SIGTERM, then using the force
-					if err := c.Stop(10); err != nil {
-						logrus.Errorf("Stop container %s with error: %v", c.ID, err)
+					// TODO(windows): Handle docker restart with paused containers
+					if c.IsPaused() {
+						// To terminate a process in freezer cgroup, we should send
+						// SIGTERM to this process then unfreeze it, and the process will
+						// force to terminate immediately.
+						logrus.Debugf("Found container %s is paused, sending SIGTERM before unpause it", c.ID)
+						sig, ok := signal.SignalMap["TERM"]
+						if !ok {
+							logrus.Warnf("System does not support SIGTERM")
+							return
+						}
+						if err := daemon.Kill(c, int(sig)); err != nil {
+							logrus.Debugf("sending SIGTERM to container %s with error: %v", c.ID, err)
+							return
+						}
+						if err := c.Unpause(); err != nil {
+							logrus.Debugf("Failed to unpause container %s with error: %v", c.ID, err)
+							return
+						}
+						if _, err := c.WaitStop(10 * time.Second); err != nil {
+							logrus.Debugf("container %s failed to exit in 10 second of SIGTERM, sending SIGKILL to force", c.ID)
+							sig, ok := signal.SignalMap["KILL"]
+							if !ok {
+								logrus.Warnf("System does not support SIGKILL")
+								return
+							}
+							daemon.Kill(c, int(sig))
+						}
+					} else {
+						// If container failed to exit in 10 seconds of SIGTERM, then using the force
+						if err := c.Stop(10); err != nil {
+							logrus.Errorf("Stop container %s with error: %v", c.ID, err)
+						}
 					}
 					c.WaitStop(-1 * time.Second)
 					logrus.Debugf("container stopped %s", c.ID)
@@ -837,6 +880,46 @@ func (daemon *Daemon) UnsubscribeToContainerStats(name string, ch chan interface
 		return err
 	}
 	daemon.statsCollector.unsubscribe(c, ch)
+	return nil
+}
+
+func (daemon *Daemon) Changes(container *Container) ([]archive.Change, error) {
+	initID := fmt.Sprintf("%s-init", container.ID)
+	return daemon.driver.Changes(container.ID, initID)
+}
+
+func (daemon *Daemon) Diff(container *Container) (archive.Archive, error) {
+	initID := fmt.Sprintf("%s-init", container.ID)
+	return daemon.driver.Diff(container.ID, initID)
+}
+
+func (daemon *Daemon) createRootfs(container *Container) error {
+	// Step 1: create the container directory.
+	// This doubles as a barrier to avoid race conditions.
+	if err := os.Mkdir(container.root, 0700); err != nil {
+		return err
+	}
+	initID := fmt.Sprintf("%s-init", container.ID)
+	if err := daemon.driver.Create(initID, container.ImageID); err != nil {
+		return err
+	}
+	initPath, err := daemon.driver.Get(initID, "")
+	if err != nil {
+		return err
+	}
+
+	if err := setupInitLayer(initPath); err != nil {
+		daemon.driver.Put(initID)
+		return err
+	}
+
+	// We want to unmount init layer before we take snapshot of it
+	// for the actual container.
+	daemon.driver.Put(initID)
+
+	if err := daemon.driver.Create(container.ID, initID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -956,7 +1039,7 @@ func getDefaultRouteMtu() (int, error) {
 		return 0, err
 	}
 	for _, r := range routes {
-		if r.Default {
+		if r.Default && r.Iface != nil {
 			return r.Iface.MTU, nil
 		}
 	}
@@ -969,7 +1052,7 @@ func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig, 
 
 	// First perform verification of settings common across all platforms.
 	if config != nil {
-		if config.WorkingDir != "" && !filepath.IsAbs(config.WorkingDir) {
+		if config.WorkingDir != "" && !system.IsAbs(config.WorkingDir) {
 			return nil, fmt.Errorf("The working directory '%s' is invalid. It needs to be an absolute path.", config.WorkingDir)
 		}
 	}

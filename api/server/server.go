@@ -227,7 +227,7 @@ func writeCorsHeaders(w http.ResponseWriter, r *http.Request, corsHeaders string
 	logrus.Debugf("CORS header is enabled and set to: %s", corsHeaders)
 	w.Header().Add("Access-Control-Allow-Origin", corsHeaders)
 	w.Header().Add("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, X-Registry-Auth")
-	w.Header().Add("Access-Control-Allow-Methods", "GET, POST, DELETE, PUT, OPTIONS")
+	w.Header().Add("Access-Control-Allow-Methods", "HEAD, GET, POST, DELETE, PUT, OPTIONS")
 }
 
 func (s *Server) ping(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -328,6 +328,8 @@ func createRouter(s *Server) *mux.Router {
 			"/containers/{name:.*}/attach/ws": s.wsContainersAttach,
 			"/exec/{id:.*}/json":              s.getExecByID,
 			"/containers/{name:.*}/archive":   s.getContainersArchive,
+			"/volumes":                        s.getVolumesList,
+			"/volumes/{name:.*}":              s.getVolumeByName,
 		},
 		"POST": {
 			"/auth":                         s.postAuth,
@@ -353,6 +355,7 @@ func createRouter(s *Server) *mux.Router {
 			"/exec/{name:.*}/start":         s.postContainerExecStart,
 			"/exec/{name:.*}/resize":        s.postContainerExecResize,
 			"/containers/{name:.*}/rename":  s.postContainerRename,
+			"/volumes":                      s.postVolumesCreate,
 		},
 		"PUT": {
 			"/containers/{name:.*}/archive": s.putContainersArchive,
@@ -360,6 +363,7 @@ func createRouter(s *Server) *mux.Router {
 		"DELETE": {
 			"/containers/{name:.*}": s.deleteContainers,
 			"/images/{name:.*}":     s.deleteImages,
+			"/volumes/{name:.*}":    s.deleteVolumes,
 		},
 		"OPTIONS": {
 			"": s.optionsHandler,

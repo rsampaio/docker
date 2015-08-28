@@ -18,9 +18,7 @@ import (
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/links"
 	"github.com/docker/docker/daemon/network"
-	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/directory"
-	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/nat"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/system"
@@ -250,6 +248,7 @@ func populateCommand(c *Container, env []string) error {
 	resources := &execdriver.Resources{
 		Memory:           c.hostConfig.Memory,
 		MemorySwap:       c.hostConfig.MemorySwap,
+		KernelMemory:     c.hostConfig.KernelMemory,
 		CPUShares:        c.hostConfig.CPUShares,
 		CpusetCpus:       c.hostConfig.CpusetCpus,
 		CpusetMems:       c.hostConfig.CpusetMems,
@@ -729,10 +728,15 @@ func (container *Container) buildCreateEndpointOptions() ([]libnetwork.EndpointO
 		for i := 0; i < len(binding); i++ {
 			pbCopy := pb.GetCopy()
 			newP, err := nat.NewPort(nat.SplitProtoPort(binding[i].HostPort))
+			var portStart, portEnd int
+			if err == nil {
+				portStart, portEnd, err = newP.Range()
+			}
 			if err != nil {
 				return nil, fmt.Errorf("Error parsing HostPort value(%s):%v", binding[i].HostPort, err)
 			}
-			pbCopy.HostPort = uint16(newP.Int())
+			pbCopy.HostPort = uint16(portStart)
+			pbCopy.HostPortEnd = uint16(portEnd)
 			pbCopy.HostIP = net.ParseIP(binding[i].HostIP)
 			pbList = append(pbList, pbCopy)
 		}
@@ -913,11 +917,6 @@ func (container *Container) configureNetwork(networkName, service, networkDriver
 func (container *Container) initializeNetworking() error {
 	var err error
 
-	// Make sure NetworkMode has an acceptable value before
-	// initializing networking.
-	if container.hostConfig.NetworkMode == runconfig.NetworkMode("") {
-		container.hostConfig.NetworkMode = runconfig.NetworkMode("default")
-	}
 	if container.hostConfig.NetworkMode.IsContainer() {
 		// we need to get the hosts files from the container to join
 		nc, err := container.getNetworkedContainer()
@@ -951,21 +950,6 @@ func (container *Container) initializeNetworking() error {
 	}
 
 	return container.buildHostnameFile()
-}
-
-func (container *Container) ExportRw() (archive.Archive, error) {
-	if container.daemon == nil {
-		return nil, fmt.Errorf("Can't load storage driver for unregistered container %s", container.ID)
-	}
-	archive, err := container.daemon.Diff(container)
-	if err != nil {
-		return nil, err
-	}
-	return ioutils.NewReadCloserWrapper(archive, func() error {
-			err := archive.Close()
-			return err
-		}),
-		nil
 }
 
 func (container *Container) getIpcContainer() (*Container, error) {
@@ -1112,14 +1096,6 @@ func (container *Container) UnmountVolumes(forceSyscall bool) error {
 	return nil
 }
 
-func (container *Container) PrepareStorage() error {
-	return nil
-}
-
-func (container *Container) CleanupStorage() error {
-	return nil
-}
-
 func (container *Container) networkMounts() []execdriver.Mount {
 	var mounts []execdriver.Mount
 	mode := "Z"
@@ -1203,7 +1179,7 @@ func (container *Container) isDestinationMounted(destination string) bool {
 func (container *Container) prepareMountPoints() error {
 	for _, config := range container.MountPoints {
 		if len(config.Driver) > 0 {
-			v, err := createVolume(config.Name, config.Driver)
+			v, err := container.daemon.createVolume(config.Name, config.Driver, nil)
 			if err != nil {
 				return err
 			}
@@ -1213,13 +1189,22 @@ func (container *Container) prepareMountPoints() error {
 	return nil
 }
 
-func (container *Container) removeMountPoints() error {
+func (container *Container) removeMountPoints(rm bool) error {
+	var rmErrors []string
 	for _, m := range container.MountPoints {
-		if m.Volume != nil {
-			if err := removeVolume(m.Volume); err != nil {
-				return err
+		if m.Volume == nil {
+			continue
+		}
+		container.daemon.volumes.Decrement(m.Volume)
+		if rm {
+			if err := container.daemon.volumes.Remove(m.Volume); err != nil {
+				rmErrors = append(rmErrors, fmt.Sprintf("%v\n", err))
+				continue
 			}
 		}
+	}
+	if len(rmErrors) > 0 {
+		return fmt.Errorf("Error removing volumes:\n%v", rmErrors)
 	}
 	return nil
 }
